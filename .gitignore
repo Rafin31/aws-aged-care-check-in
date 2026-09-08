@@ -1,6 +1,10 @@
 # Claude Code local settings — never shared, machine/session-specific
 .claude/
 
+# Claude instruction files — local-only, never pushed to remote (hard rule)
+CLAUDE.md
+SOUL.md
+
 # OS cruft
 .DS_Store
 Thumbs.db
