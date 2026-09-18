@@ -73,3 +73,73 @@ inline mapping) vs. the older JS-config approach, and keeping a single
 source of truth for design values across light/dark variants.
 
 **Push:** `web: wire design system tokens, add dark palette`
+
+## 2026-09-10 — Phase 6 (Tasks 4-7): callback-tokens table + first 3 lambdas
+
+**What was built:** `CheckinWorkflowStack`'s `CallbackTokensTable`
+(DynamoDB, PK=`callbackId`, TTL on `expiresAt`) — the bridge table that
+lets an async AWS event (a call ending, a Transcribe job finishing) resume
+the correct paused Step Functions execution. Plus the first three of six
+check-in workflow lambdas, each with its own least-privilege IAM role and
+a Zod schema at the input boundary: `start-checkin` (invokes Connect's
+`StartOutboundVoiceContactCommand`), `call-completed` (called by the
+contact flow when the call ends, resumes the first `waitForTaskToken`
+pause via `SendTaskSuccess`), `register-transcription-callback` (stores
+the second pause's task token, keyed by the Transcribe job name that will
+eventually complete and call back).
+
+**Why this approach:** Two separate `waitForTaskToken` pauses instead of
+polling — Step Functions can freeze an execution indefinitely without
+burning compute or Lambda invocations while waiting on a phone call or a
+transcription job, and each pause's completion event is what actually
+resumes it. `CallbackTokensTable` is deliberately separate from the
+`CheckIns` history table (transient token bookkeeping vs. permanent
+history — different access pattern, TTL'd so a stuck token from an
+abandoned call can't accumulate forever).
+
+**AWS concepts demonstrated:** Step Functions' task-token callback
+pattern for long-running async work, DynamoDB TTL for self-cleaning
+transient state, Zod validation at every Lambda boundary treating both
+external events and the DynamoDB row as untrusted input.
+
+**Push:** `feat: add register-transcription-callback lambda` (9af2bd8),
+plus `033cdfc`, `ae76694`, `cf7d3b1`.
+
+## 2026-09-18 — Phase 6 (Tasks 8-12): remaining lambdas + state machine wiring
+
+**What was built:** The last three lambdas —
+`transcribe-completed` (fetches the Transcribe output JSON from S3, pulls
+the plain-text transcript, resumes the second pause), `analyze-response`
+(first real Bedrock usage — Claude Haiku 4.5, prompted for structured JSON
+distress/sentiment analysis, validated with Zod before trusting any field
+of the model's reply), `send-alert` (publishes to SNS, email-only). Then
+`checkin-workflow-stack.ts`'s full Step Functions state machine wiring all
+six lambdas + the raw `StartTranscriptionJob`/`WriteCheckinResult` SDK
+calls into one chain, ending in a `Choice` state that routes to
+`send-alert` when `distressDetected` is true or the person didn't respond
+at all, otherwise straight to logging the result.
+
+**Why this approach:**
+- `analyze-response`'s system prompt lives in its own `prompt.ts` file
+  (not inlined in the handler) so wording can be tuned without touching
+  invocation logic — added after Rafin asked for the no-answer and
+  non-verbal-distress (moaning/groaning) cases to be handled explicitly
+  rather than left to the model's default judgment.
+- Claude 3 Haiku (the originally-planned model) was retired from the
+  Bedrock catalog between the Sept 6 plan and this build — switched to
+  Claude Haiku 4.5's cross-region inference profile instead, full
+  reasoning in
+  [`docs/decisions/0001-bedrock-model-haiku-4-5-cross-region.md`](decisions/0001-bedrock-model-haiku-4-5-cross-region.md).
+- The Transcribe job's S3 access uses `CallAwsService`'s
+  `additionalIamStatements` rather than the plan's placeholder grant call,
+  which doesn't exist on that construct — see
+  `docs/TROUBLESHOOTING.md`.
+
+**AWS concepts demonstrated:** Amazon Bedrock's `InvokeModel` API and
+cross-region inference profiles, Step Functions `Choice` states for
+branching business logic, least-privilege IAM scoped per Lambda (no shared
+roles), treating a foundation model's output as untrusted input requiring
+runtime validation just like any external API response.
+
+**Push:** not yet pushed — commits so far: `ad46d85`, `4f4aafa`, `4e06d5f`,
+`db95169`, plus the state machine wiring commit pending as of this entry.
