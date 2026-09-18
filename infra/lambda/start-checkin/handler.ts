@@ -16,6 +16,7 @@ export async function handler(event: StartCheckinInput): Promise<void> {
   const { ContactId } = await connectClient.send(
     new StartOutboundVoiceContactCommand({
       DestinationPhoneNumber: input.phoneNumber,
+      // Lambda functions get env vars from the CDK stack, set at deploy time.
       ContactFlowId: process.env.CONNECT_CONTACT_FLOW_ID,
       InstanceId: process.env.CONNECT_INSTANCE_ARN,
       SourcePhoneNumber: process.env.CONNECT_SOURCE_PHONE_NUMBER,
