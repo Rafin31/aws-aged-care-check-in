@@ -1,8 +1,11 @@
 import { z } from 'zod';
 
 export const callCompletedInputSchema = z.object({
-  contactId: z.string().min(1),
-  recordingS3Uri: z.string().url(),
+  detail: z.object({
+    eventType: z.literal('DISCONNECTED'),
+    contactId: z.string().min(1),
+    instanceArn: z.string().min(1),
+  }),
 });
 
 export type CallCompletedInput = z.infer<typeof callCompletedInputSchema>;

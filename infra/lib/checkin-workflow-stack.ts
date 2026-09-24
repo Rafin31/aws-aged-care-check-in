@@ -82,9 +82,16 @@ export class CheckinWorkflowStack extends cdk.Stack {
     callCompletedFn.addToRolePolicy(
       new iam.PolicyStatement({ actions: ['states:SendTaskSuccess', 'states:SendTaskFailure'], resources: ['*'] }),
     );
-    // Connect invokes this Lambda directly from the published contact
-    // flow (Task 11) — grant that specific principal, not a wildcard.
-    callCompletedFn.grantInvoke(new iam.ServicePrincipal('connect.amazonaws.com'));
+    // The contact flow itself can't hand this Lambda a finished
+    // recording location — recordings only finalize in S3 after the
+    // call disconnects, which is after the flow's last block runs. So
+    // this Lambda is triggered by Connect's own "DISCONNECTED" contact
+    // event on EventBridge instead (wired below), and looks the
+    // recording up itself via DescribeContact once the call has
+    // actually ended.
+    callCompletedFn.addToRolePolicy(
+      new iam.PolicyStatement({ actions: ['connect:DescribeContact'], resources: [instanceArn] }),
+    );
 
     const registerTranscriptionCallbackFn = new lambda_nodejs.NodejsFunction(
       this,
@@ -152,6 +159,19 @@ export class CheckinWorkflowStack extends cdk.Stack {
         detail: { TranscriptionJobStatus: ['COMPLETED'] },
       },
       targets: [new events_targets.LambdaFunction(transcribeCompletedFn)],
+    });
+
+    // Amazon Connect publishes this automatically whenever any call on
+    // the instance ends — filtered to this instance so calls from other
+    // Connect instances on the account's event bus (there shouldn't be
+    // any, but the bus is account-wide) don't trigger a wasted lookup.
+    new events.Rule(this, 'CallDisconnectedRule', {
+      eventPattern: {
+        source: ['aws.connect'],
+        detailType: ['Amazon Connect Contact Event'],
+        detail: { eventType: ['DISCONNECTED'], instanceArn: [instanceArn] },
+      },
+      targets: [new events_targets.LambdaFunction(callCompletedFn)],
     });
 
     const waitForCallCompletion = new sfn_tasks.LambdaInvoke(this, 'WaitForCallCompletion', {

@@ -1,7 +1,7 @@
 import * as cdk from 'aws-cdk-lib/core';
 import * as dynamodb from 'aws-cdk-lib/aws-dynamodb';
 import * as s3 from 'aws-cdk-lib/aws-s3';
-import { Template } from 'aws-cdk-lib/assertions';
+import { Match, Template } from 'aws-cdk-lib/assertions';
 import { CheckinWorkflowStack } from '../../lib/checkin-workflow-stack';
 
 function buildTestStack() {
@@ -42,6 +42,25 @@ test('CheckinWorkflowStack creates a state machine with the retry-free happy pat
     EventPattern: {
       source: ['aws.transcribe'],
       'detail-type': ['Transcribe Job State Change'],
+    },
+  });
+  template.hasResourceProperties('AWS::Events::Rule', {
+    EventPattern: {
+      source: ['aws.connect'],
+      'detail-type': ['Amazon Connect Contact Event'],
+      detail: { eventType: ['DISCONNECTED'] },
+    },
+  });
+});
+
+test('CheckinWorkflowStack grants call-completed DescribeContact instead of Connect invoke', () => {
+  const template = buildTestStack();
+
+  template.hasResourceProperties('AWS::IAM::Policy', {
+    PolicyDocument: {
+      Statement: Match.arrayWith([
+        Match.objectLike({ Action: 'connect:DescribeContact' }),
+      ]),
     },
   });
 });
